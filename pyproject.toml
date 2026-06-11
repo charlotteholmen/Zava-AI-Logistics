@@ -49,12 +49,14 @@ dependencies = [
     # Azure Cosmos DB
     "azure-cosmos>=4.5.0",
     
-    # Microsoft Agent Framework v1.0
-    "agent-framework-azure-ai==1.0.0rc3",
-    "agent-framework-core==1.0.0rc3",
+    # Microsoft Agent Framework v1.8.1 (GA)
+    # agent-framework-azure-ai removed — superseded by agent-framework-foundry
+    "agent-framework-core>=1.8.1",
+    "agent-framework-openai>=1.8.1",       # OpenAIChatClient (renamed from OpenAIChatCompletionClient)
+    "agent-framework-foundry>=1.8.1",     # FoundryChatClient, FoundryMemoryProvider
     "agent-framework-orchestrations",
-    "azure-ai-agentserver-agentframework==1.0.0b16",
-    "azure-ai-agentserver-core==1.0.0b16",
+    "azure-ai-agentserver-agentframework==1.0.0b17",
+    "azure-ai-agentserver-core==1.0.0b16",  # held at b16 — 2.x is a major-version break
     "debugpy>=1.8.0",
     "agent-dev-cli",
     

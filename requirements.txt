@@ -16,13 +16,15 @@ azure-cognitiveservices-speech>=1.35.0  # Azure Speech Services for voice input/
 # Azure Cosmos DB
 azure-cosmos>=4.5.0
 
-# Microsoft Agent Framework v1.0
-agent-framework-azure-ai==1.0.0rc3
-agent-framework-core==1.0.0rc3
-agent-framework-orchestrations  # SequentialBuilder, HandoffBuilder, GroupChatBuilder
+# Microsoft Agent Framework v1.8.1 (GA)
+# agent-framework-azure-ai removed — superseded by agent-framework-foundry
+agent-framework-core>=1.8.1
+agent-framework-openai>=1.8.1        # OpenAIChatClient (renamed from OpenAIChatCompletionClient)
+agent-framework-foundry>=1.8.1      # FoundryChatClient, FoundryMemoryProvider (replaces agent-framework-azure-ai)
+agent-framework-orchestrations      # SequentialBuilder, HandoffBuilder, GroupChatBuilder, MagenticBuilder
 # HTTP server hosting for Agent Inspector / agentdev CLI
-azure-ai-agentserver-agentframework==1.0.0b16
-azure-ai-agentserver-core==1.0.0b16
+azure-ai-agentserver-agentframework==1.0.0b17
+azure-ai-agentserver-core==1.0.0b16  # held at b16 — b5 is a major-version break, review separately
 # Debug tooling
 debugpy>=1.8.0
 agent-dev-cli

@@ -58,7 +58,8 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
 from azure.identity.aio import (
     DefaultAzureCredential,
     ManagedIdentityCredential,
@@ -83,6 +84,10 @@ from src.infrastructure.agents.maf.tools import (
 # Environment
 # ---------------------------------------------------------------------------
 _OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+_FOUNDRY_ENDPOINT: str = (
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+    or os.getenv("FOUNDRY_PROJECT_ENDPOINT", "")
+)
 _MODEL: str = (
     os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME")
     or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME")
@@ -100,18 +105,28 @@ def _credential():
     )
 
 
-def _make_openai_client(middleware=None) -> OpenAIChatCompletionClient:
-    """Build an OpenAIChatClient backed by an Azure AD token credential.
+def _make_openai_client(middleware=None):
+    """Build a chat client backed by Azure AD token credentials.
 
-    Passing credential= explicitly ensures the client uses Azure AD token
-    auth and ignores any stale AZURE_OPENAI_API_KEY environment variable
-    (key auth is disabled on this Azure OpenAI resource).
-    api_version 2025-03-01-preview is required for the Responses API.
+    Prefers FoundryChatClient when AZURE_AI_PROJECT_ENDPOINT is set (native
+    Foundry auth, no api_version wiring needed).  Falls back to OpenAIChatClient
+    with a direct Azure OpenAI endpoint for environments that only have
+    AZURE_OPENAI_ENDPOINT configured.
     """
+    if _FOUNDRY_ENDPOINT:
+        kwargs: dict = {
+            "project_endpoint": _FOUNDRY_ENDPOINT,
+            "model": _MODEL,
+            "credential": _credential(),
+        }
+        if middleware:
+            kwargs["middleware"] = middleware
+        return FoundryChatClient(**kwargs)
+
     token_provider = get_bearer_token_provider(
         _credential(), "https://cognitiveservices.azure.com/.default"
     )
-    kwargs: dict = {
+    kwargs = {
         "azure_endpoint": _OPENAI_ENDPOINT,
         "model": _MODEL,
         "credential": token_provider,
@@ -119,21 +134,32 @@ def _make_openai_client(middleware=None) -> OpenAIChatCompletionClient:
     }
     if middleware:
         kwargs["middleware"] = middleware
-    return OpenAIChatCompletionClient(**kwargs)
+    return OpenAIChatClient(**kwargs)
 
 
 def _make_cs_agent(middleware=None) -> Agent:
-    """Create a Customer Service Agent with tools and system prompt."""
+    """Create the Customer Service Agent with tools, system prompt, and Foundry memory."""
     instructions = ""
     try:
         instructions = get_agent_prompt("customer-service")
     except Exception:
         pass
+
+    extra: dict = {}
+    if _FOUNDRY_ENDPOINT:
+        try:
+            extra["context_providers"] = [
+                FoundryMemoryProvider(memory_store_name="zava-cs-memory")
+            ]
+        except Exception:
+            pass  # degrade gracefully if the memory store has not been provisioned yet
+
     return Agent(
         client=_make_openai_client(middleware=middleware),
         name="zava-customer-service",
         instructions=instructions or None,
         tools=[track_parcel, search_parcels_by_recipient, search_parcels_by_driver],
+        **extra,
     )
 
 

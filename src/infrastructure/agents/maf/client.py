@@ -24,13 +24,13 @@ from dotenv import load_dotenv
 load_dotenv(override=False)
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
 from azure.identity.aio import (
     DefaultAzureCredential,
     ManagedIdentityCredential,
     get_bearer_token_provider,
 )
-from openai.lib.azure import AsyncAzureOpenAI
 
 from src.infrastructure.agents.core.prompt_loader import get_agent_prompt
 from src.infrastructure.agents.maf.tools import (
@@ -45,6 +45,10 @@ from src.infrastructure.agents.maf.tools import (
 )
 
 _OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+_FOUNDRY_ENDPOINT: str = (
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+    or os.getenv("FOUNDRY_PROJECT_ENDPOINT", "")
+)
 _MODEL: str = (
     os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME")
     or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME")
@@ -74,31 +78,56 @@ def _make_credential():
     )
 
 
-def make_chat_client(middleware: Optional[list] = None) -> OpenAIChatCompletionClient:
-    """Build an OpenAIChatClient wired to the Azure OpenAI endpoint."""
+def make_chat_client(middleware: Optional[list] = None):
+    """Build a chat client wired to Azure AI.
+
+    Prefers FoundryChatClient when AZURE_AI_PROJECT_ENDPOINT (or
+    FOUNDRY_PROJECT_ENDPOINT) is set — native Foundry auth, no manual
+    token-provider wiring required.  Falls back to OpenAIChatClient with a
+    direct AZURE_OPENAI_ENDPOINT for local dev environments that do not have
+    a full Foundry project endpoint configured.
+    """
+    if _FOUNDRY_ENDPOINT:
+        kwargs: Dict[str, Any] = {
+            "project_endpoint": _FOUNDRY_ENDPOINT,
+            "model": _MODEL,
+            "credential": _make_credential(),
+        }
+        if middleware:
+            kwargs["middleware"] = middleware
+        return FoundryChatClient(**kwargs)
+
     if not _OPENAI_ENDPOINT:
-        raise RuntimeError("AZURE_OPENAI_ENDPOINT is not set. Add it to your .env file.")
+        raise RuntimeError(
+            "Neither AZURE_AI_PROJECT_ENDPOINT nor AZURE_OPENAI_ENDPOINT is set. "
+            "Add one to your .env file."
+        )
     token_provider = get_bearer_token_provider(
         _make_credential(), "https://cognitiveservices.azure.com/.default"
     )
-    async_openai = AsyncAzureOpenAI(
-        azure_endpoint=_OPENAI_ENDPOINT,
-        azure_ad_token_provider=token_provider,
-        api_version="2025-03-01-preview",
-    )
-    kwargs: Dict[str, Any] = {"model": _MODEL, "async_client": async_openai}
+    kwargs = {
+        "azure_endpoint": _OPENAI_ENDPOINT,
+        "model": _MODEL,
+        "credential": token_provider,
+        "api_version": "2025-03-01-preview",
+    }
     if middleware:
         kwargs["middleware"] = middleware
-    return OpenAIChatCompletionClient(**kwargs)
+    return OpenAIChatClient(**kwargs)
 
 
 def make_agent(
     agent_key: str,
     *,
-    client: Optional[OpenAIChatCompletionClient] = None,
+    client=None,
     middleware: Optional[list] = None,
 ) -> Agent:
-    """Build a MAF v1.0 Agent for the given agent_key."""
+    """Build a MAF v1.8 Agent for the given agent_key.
+
+    The customer_service agent automatically receives a FoundryMemoryProvider
+    when AZURE_AI_PROJECT_ENDPOINT is available, giving it persistent semantic
+    memory across sessions via the Foundry Memory Store.
+    """
     instructions = ""
     try:
         instructions = get_agent_prompt(agent_key.replace("_", "-"))
@@ -106,11 +135,22 @@ def make_agent(
         pass
     agent_tools = _AGENT_TOOL_MAP.get(agent_key) or None
     chat_client = client or make_chat_client(middleware=middleware)
+
+    extra: Dict[str, Any] = {}
+    if agent_key == "customer_service" and _FOUNDRY_ENDPOINT:
+        try:
+            extra["context_providers"] = [
+                FoundryMemoryProvider(memory_store_name="zava-cs-memory")
+            ]
+        except Exception:
+            pass  # degrade gracefully if the memory store has not been provisioned yet
+
     return Agent(
         client=chat_client,
         name=f"zava-{agent_key.replace('_', '-')}",
         instructions=instructions or None,
         tools=agent_tools,
+        **extra,
     )
 
 
